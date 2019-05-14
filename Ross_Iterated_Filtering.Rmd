@@ -1,0 +1,302 @@
+---
+title: "Ross_Iterated_Filtering"
+author: "Zhanhao Zhang"
+date: "May 9, 2019"
+output: html_document
+---
+
+## References
+[Getting Started With Pomp](https://kingaa.github.io/pomp/vignettes/getting_started.html)
+
+## Required Inputs
+data: a csv with one column for time and some other columns for variables.  
+hyper-parameters:  
+&nbsp;&nbsp;Np: number of particles  
+&nbsp;&nbsp;Nmif: number of iterations  
+&nbsp;&nbsp;rw.sd: 0 for parameters that are constant, > 0 for parameters we want to fit.  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;It also determines the step size of each parameter during the training.
+
+```{r setup, eval=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Packages Required
+```{r, eval=FALSE}
+library(pomp2)
+library(magrittr)
+library(subplex)
+library(foreach)
+library(doParallel)
+library(ggplot2)
+library(dplyr)
+```
+
+## Demo (Ross-Macdonald Model)
+Registers workers, change the 4 to a larger number if you
+have a more powerful computer.
+```{r,eval=FALSE}
+# Registers workers, change the 4 to a larger number if you
+# have a more powerful computer.
+registerDoParallel(cores=4)
+```
+
+Read the data
+``` {r, eval=FALSE}
+output_read <- read.csv("output1.csv")
+```
+The column names of data should be different from the statenames
+which is required by pomp
+```{r, eval=FALSE}
+colnames(output_read) <- c("time", "M_c", "Y_c", "Z_c", "I_c")
+statenames <- c("M", "Y", "Z", "I", "K", "ER")
+paranames <- c("p", "a", "l", "r", "b", "H", "E", "c")
+```
+parameter values
+```{r, eval=FALSE}
+params <- c(E=11, r=0.005, b=0.55, a=0.27, c=0.15, H=2000)
+```
+initial values for each variable  
+K and ER are helper variables that are needed in the step function  
+```{r, eval=FALSE}
+Csnippet("M=468.9; Y=0; Z=0; I=340;K=0; ER=0;") -> init
+```
+step functions  
+the variables will be updated accordingly at each time step  
+  
+step function -- stochastic version  
+using pseudocode  
+```{r, eval=FALSE}
+Csnippet("
+  M += l;
+  M *= p;
+  Y *= p;
+  double Y_0 = a*K*(M-Y);
+  Y += Y_0;
+  Z = pow(p, E)*Y;
+  I = I - r*I + b*ER*(H - I);
+
+  I = I > 0 ? I : 0;
+  M = M > 0 ? M : 0;
+  Y = Y > 0 ? Y : 0;
+  Z = Z > 0 ? Z : 0;
+
+  K = c*I/H;
+  ER = a*Z/H;
+") -> step
+```
+step function -- deterministic version  
+converted from Ross-Macdonald equation, approximated using taylor expansion
+```{r, eval=FALSE}
+Csnippet("
+  double di1 = r*dt*I;
+  double di2 = b*ER*(H-I)*dt;
+  double dm1 = p*M*dt;
+  double dm2 = -l*(1+p*dt)*dt;
+  double dy1 = p*Y*dt;
+  double dy2 = a*K*(M-Y)*dt;
+  double dz1 = p*Z*dt;
+  double dz2 = a*K*(M-Y)*dt;
+  
+  I += di1 - di2;
+  M += dm1 - dm2;
+  Y += dy1 - dy2;
+  Z += dz1 - dz2;
+
+  I = I > 0 ? I : 0;
+  M = M > 0 ? M : 0;
+  Y = Y > 0 ? Y : 0;
+  Z = Z > 0 ? Z : 0;
+
+  K = c*I/H;
+  ER = a*Z/H;
+") -> step_det
+```
+rmeasure, indicates how each variable in the data are generated from the data we are estimating. In this case, each variable we estimate should be the same as the corresponding variable in the original data.
+```{r, eval=FALSE}
+Csnippet("I_c=I; M_c=M; Y_c = Y; Z_c = Z;") -> rmeas
+```
+dmeasure, tells the likelihood of each set of estimated values  
+Here, I assume they should center around the value in the original data  
+The farther they are from the original data, the less likely it is
+```{r, eval=FALSE}
+Csnippet("
+         double di = dnorm(I - I_c, 0, 10, 0);
+         double dm = dnorm(M - M_c, 0, 10, 0);
+         double dy = dnorm(Y - Y_c, 0, 10, 0);
+         double dz = dnorm(Z - Z_c, 0, 10, 0);
+         lik = di*dm*dy*dz;") -> dmeas
+```
+Construct a pomp object 
+  
+initialize pomp with the Csnippets we defined in the previous part
+```{r, eval=FALSE}
+output_read %>%
+  pomp(
+    times="time", t0=0,
+    rinit=init, rmeasure=rmeas,
+    rprocess=discrete_time(step,delta.t=1),
+    statenames=statenames,
+    paramnames=paranames
+  ) -> output_pomp
+```
+Code the deterministic skeleton, which is identical to our ODE,
+since we don't have random variables directly appears in the ODE
+```{r, eval=FALSE}
+output_pomp %>%
+  pomp(
+    skeleton=map(
+      Csnippet("DM=l*(1-p)-p*M; DY=a*K*(M-Y)-p*Y;
+                DZ=pow(p, E)*DY;DI=b*ER*(H-I)-r*I;"),
+      delta.t=1
+    ),
+    paramnames=paranames,
+    statenames=statenames
+  ) -> output_pomp
+```
+
+Estimate the parameters using the subplex package
+Currently I don't use it anymore, but I leave it here for debugging
+If this function gives an output without error messages, then we
+haven't made any syntactic errors in the previous parts
+```{r, eval=FALSE}
+output_pomp %>%
+  traj_objfun(
+    est=c("p", "l"),
+    params=c(params,p=1, l=1),
+    dmeasure=dmeas, statenames=statenames
+  ) -> ofun
+
+subplex(c(1.1, 1.1),fn=ofun) -> fit
+fit 
+```
+Generate nseq number of random guesses of each paramter
+with their lower bound and upper bound
+For the paramters we passed in as constants (eg. N)
+We can just set both of their lower and upper bounds to their values (eg. N = 500)
+```{r, eval=FALSE}
+sobolDesign(
+  lower=c(p=0, l=0, E=11, r=0.005, b=0.55, a=0.27, c=0.15, H=2000),
+  upper=c(p=1, l=100, E=11, r=0.005, b=0.55, a=0.27, c=0.15, H=2000),
+  nseq=200
+) -> guesses
+```
+Initialize the object for particle filter using random guesses we generated  
+Np is the number of particles we use  
+Nmif is the number of iterations  
+rw.sd is the standard deviation of a paramter when sample it in the particle filter algorithm  
+rw.sd of a constant should be set to 0, so that its value won't change
+```{r, eval=FALSE}
+output_pomp %>%
+  mif2(
+    params=guesses[1,],
+    Np=200,
+    Nmif=150,
+    dmeasure=dmeas,
+    partrans=parameter_trans(log=c("p", "a", "l", "r", "b", "H", "E", "c")),
+    cooling.fraction.50=0.5,
+    rw.sd=rw.sd(E=0, r=0, b=0, a=0, c=0, H=0, p=0.01, l=0.01),
+    paramnames=paranames,
+    statenames=statenames,
+    filter.traj=TRUE,
+    pred.mean=TRUE,
+    pred.var=TRUE
+  ) -> mf1
+```
+Do a global search
+```{r, eval=FALSE}
+foreach(guess=iter(guesses, "row"),
+        .combine=c, .packages=c("pomp2"),
+        .errorhandling="remove", .inorder=FALSE) %dopar% {
+          mf1 %>% mif2(params=guess)
+        } ->mifs
+```
+Get the likelihood of these estimates
+```{r, eval=FALSE}
+foreach (mf=mifs,
+         .combine=rbind, .packages=c("pomp2"), 
+         .errorhandling="remove", .inorder=FALSE) %dopar% {
+           
+           replicate(5, 
+                     mf %>% pfilter() %>% logLik()
+           ) %>%
+             logmeanexp(se=TRUE) -> ll
+           
+           data.frame(as.list(coef(mf)),loglik=ll[1],loglik.se=ll[2])
+           
+         } -> estimates
+```
+More search efforts
+```{r, eval=FALSE}
+estimates %>% select(-loglik, -loglik.se) -> starts
+foreach (start=iter(starts,"row"),
+         .combine=rbind, .packages=c("pomp2"),
+         .errorhandling="remove", .inorder=FALSE) %dopar% {
+           
+           mf1 %>%
+             mif2(
+               params=start,
+               partrans=parameter_trans(log=c("p", "a", "l", "r", "b", "H", "E", "c")),
+               rw.sd=rw.sd(E=0, r=0, b=0, a=0, c=0, H=0, p=0.01, l=0.01),
+               paramnames=paranames
+             ) %>%
+             mif2() -> mf
+           
+           replicate(5, 
+                     mf %>% pfilter() %>% logLik()
+           ) %>%
+             logmeanexp(se=TRUE) -> ll
+           
+           data.frame(as.list(coef(mf)),loglik=ll[1],loglik.se=ll[2])
+         } -> r_prof
+```
+Get the MLE and draw the simulation plots
+```{r, eval=FALSE}
+r_prof[which.max(r_prof[,9]),][1:8] -> mle
+
+mlepomp <- as(mifs[[1]], 'pomp')
+coef(mlepomp) <- mle
+
+mlepomp2 <- as(mifs2[[1]], 'pomp')
+coef(mlepomp2) <- mle
+
+# Simulation plots for I
+mlepomp %>%
+  simulate(nsim=1,format="data.frame",include.data=TRUE) %>%
+  ggplot(mapping=aes(x=time,y=I_c,group=.id,alpha=(.id=="data")))+
+  scale_alpha_manual(values=c(`TRUE`=1,`FALSE`=0.2),
+                     labels=c(`FALSE`="simulation",`TRUE`="data"))+
+  labs(alpha="")+
+  geom_line()+
+  theme_bw()
+ggsave("plots/sim_I_dt=1_Nmif=150_Np=200.png")
+# Simulation plots for M
+mlepomp %>%
+  simulate(nsim=3,format="data.frame",include.data=TRUE) %>%
+  ggplot(mapping=aes(x=time,y=M_c,group=.id,alpha=(.id=="data")))+
+  scale_alpha_manual(values=c(`TRUE`=1,`FALSE`=0.2),
+                     labels=c(`FALSE`="simulation",`TRUE`="data"))+
+  labs(alpha="")+
+  geom_line()+
+  theme_bw()
+ggsave("plots/sim_M_dt=1_Nmif=150_Np=200.png")
+# Simulation plots for Y
+mlepomp %>%
+  simulate(nsim=3,format="data.frame",include.data=TRUE) %>%
+  ggplot(mapping=aes(x=time,y=Y_c,group=.id,alpha=(.id=="data")))+
+  scale_alpha_manual(values=c(`TRUE`=1,`FALSE`=0.2),
+                     labels=c(`FALSE`="simulation",`TRUE`="data"))+
+  labs(alpha="")+
+  geom_line()+
+  theme_bw()
+ggsave("plots/sim_Y_dt=1_Nmif=150_Np=200.png")
+# Simulation plots for Z
+mlepomp %>%
+  simulate(nsim=3,format="data.frame",include.data=TRUE) %>%
+  ggplot(mapping=aes(x=time,y=Z_c,group=.id,alpha=(.id=="data")))+
+  scale_alpha_manual(values=c(`TRUE`=1,`FALSE`=0.2),
+                     labels=c(`FALSE`="simulation",`TRUE`="data"))+
+  labs(alpha="")+
+  geom_line()+
+  theme_bw()
+ggsave("plots/sim_Z_dt=1_Nmif=150_Np=200.png")
+```
