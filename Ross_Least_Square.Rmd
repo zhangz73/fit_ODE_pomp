@@ -8,6 +8,9 @@ output: html_document
 ## References
 [Learning R: Parameter Fitting for Models Involving Differential Equations](https://www.r-bloggers.com/learning-r-parameter-fitting-for-models-involving-differential-equations/)
 
+## How it works?
+The Least Square Method is a more straight forward algorithm. Its basic idea is to come up with a set of parameters, using which we can generate the estimated values for each variable in a time series that have the least square error from the original data.
+
 ## Required Inputs
 data: a csv with one column for time and some other columns for variables.  
 hyper-parameters:  
@@ -30,8 +33,7 @@ library(pomp2)
 
 ## Demo (Ross-Macdonald Model)
 
-Registers workers, change the 4 to a larger number if you
-have a more powerful computer.
+Registers workers (for parallel programming), change the 4 to a larger number if you have a more powerful computer.
 ```{r,eval=FALSE}
 registerDoParallel(cores=4)
 ```
@@ -51,8 +53,8 @@ c = 0.15
 H = 2000
 ```
 
-Step function--discrete version  
-takes in parameter values p and l  
+Step function--discrete version using [pseudocode](https://github.com/smitdave/MASH-Main/blob/master/MASH-dev/DanielCitron/RM-Macro/RM-macro.pdf)  <br>
+takes in parameter values p and l  <br>
 output a dataframe containing estimated values for each variable at each time
 ```{r,eval=FALSE}
 get_sim_df <- function(p, l, end_t){
@@ -82,10 +84,10 @@ get_sim_df <- function(p, l, end_t){
 }
 ```
 
-Step function--continuous version  
-t: all possible values of time from the dataset  
-y: a vector storing values of each variable at a certain time  
-parms: stores the parameter values, p and l  
+Step function--continuous version  <br>
+t: all possible values of time from the dataset  <br>
+y: a vector storing values of each variable at a certain time  <br>
+parms: stores the parameter values, p and l  <br>
 output a list containing rates for each variable at a given time (i.e for variable X, the list contains the value for dX/dt)
 ```{r, eval=FALSE}
 rxnrate <- function(t, y, parms){
@@ -105,7 +107,7 @@ rxnrate <- function(t, y, parms){
 }
 ```
 
-Uses the discrete step function  
+Uses the discrete step function  <br>
 outputs a dataframe containing the difference between the estimated values and the observed values of each variable at each time
 ```{r,eval=FALSE}
 ssq <- function(params){
@@ -122,7 +124,7 @@ ssq <- function(params){
 }
 ```
 
-Uses the continuous step function (generating estimated values using ode in r)  
+Uses the continuous step function (generating estimated values using ode in r)  <br>
 outputs a dataframe containing the difference between the estimated values and the observed values of each variable at each time
 ```{r, eval=FALSE}
 ssq <- function(params){
@@ -186,27 +188,35 @@ Plot the trajectories of fitted curves VS original curves for each variable
 # Plot
 out_df <- get_sim_df(par$p, par$l, 5000)
 
-jpeg("plots/ross_M_whole_step_dt=14.jpeg")
+jpeg("plots/ross_M_whole_step_dt=1.jpeg")
 plot(ross_read$time, ross_read$M, main="M",
      xlab="time", ylab="nums", type="l", col="green")
 lines(out_df$time, out_df$M, col="black")
 dev.off()
 
-jpeg("plots/ross_Y_whole_step_dt=14.jpeg")
+jpeg("plots/ross_Y_whole_step_dt=1.jpeg")
 plot(ross_read$time, ross_read$Y, main="Y",
      xlab="time", ylab="nums", type="l", col="green")
 lines(out_df$time, out_df$Y, col="black")
 dev.off()
 
-jpeg("plots/ross_Z_whole_step_dt=14.jpeg")
+jpeg("plots/ross_Z_whole_step_dt=1.jpeg")
 plot(ross_read$time, ross_read$Z, main="Z",
      xlab="time", ylab="nums", type="l", col="green")
 lines(out_df$time, out_df$Z, col="black")
 dev.off()
 
-jpeg("plots/ross_I_whole_step_dt=14.jpeg")
+jpeg("plots/ross_I_whole_step_dt=1.jpeg")
 plot(ross_read$time, ross_read$I, main="I",
      xlab="time", ylab="nums", type="l", col="green")
 lines(out_df$time, out_df$I, col="black")
 dev.off()
+```
+
+The plots are below.<br>
+```{r, echo=FALSE}
+knitr::include_graphics("plots/LM/ross_I_whole_step.jpeg")
+knitr::include_graphics("plots/LM/ross_M_whole_step.jpeg")
+knitr::include_graphics("plots/LM/ross_Y_whole_step.jpeg")
+knitr::include_graphics("plots/LM/ross_Z_whole_step.jpeg")
 ```

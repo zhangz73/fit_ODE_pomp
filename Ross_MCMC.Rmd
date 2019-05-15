@@ -8,12 +8,16 @@ output: html_document
 ## References
 [Markov Chain Monte Carlo](https://en.wikipedia.org/wiki/Markov_chain_Monte_Carlo)
 
+## How it works?
+The Monte Carlo Markov Chain (MCMC), is based on rejection sampling.
+For a single chain, it starts at an initial guesses for the missing parameters. Then, it samples another set of parameters center around the previous set. Then it compares their likelihood. If the likelihood is higher than the previous one, then it updates the parameters to the current set. If the likelihood is lower than the previous one, then it adopts the current likelihood with the probability of current likelihood/previous likelihood. It continuous until it has gone through a user-specified number of iterations. The output is the set of parameter values that has the highest likelihood, among all these iterations. Particle Monte Carlo Markov Chain (pMCMC) is the same as MCMC, except that we have multiple chains instead of one, and the outcome will be the set of parameter values that has the highest likelihood among all these chains.
+
 ## Required Inputs
 data: a csv with one column for time and some other columns for variables.  
-hyper-parameters:  
-&nbsp;&nbsp;step-size for each parameter  
-&nbsp;&nbsp;number of particles  
-&nbsp;&nbsp;number of iterations  
+hyper-parameters:  <br>
+&nbsp;&nbsp;step-size for each parameter  <br>
+&nbsp;&nbsp;number of particles  <br>
+&nbsp;&nbsp;number of iterations  <br>
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -31,8 +35,7 @@ library(numDeriv)
 
 ## Demo (Ross-Macdonald Model)
 
-Registers workers, change the 4 to a larger number if you
-have a more powerful computer.
+Registers workers (for parallel programming), change the 4 to a larger number if you have a more powerful computer.
 ```{r,eval=FALSE}
 registerDoParallel(cores=4)
 ```
@@ -67,7 +70,8 @@ mean_Z2 <- mean(ross_read$Z[start:end])
 mean_I2 <- mean(ross_read$I[start:end])
 ```
 
-Step function
+Step function <br>
+using the [pseudocode](https://github.com/smitdave/MASH-Main/blob/master/MASH-dev/DanielCitron/RM-Macro/RM-macro.pdf)
 ```{r, eval=FALSE}
 get_sim_df <- function(p, l, start_t, end_t){
   output_df <- data.frame(time=start_t, M=ross_read$M[start_t + 1], 
@@ -99,9 +103,9 @@ get_sim_df <- function(p, l, start_t, end_t){
 }
 ```
 
-Calculate likelihood functions based on given set of parameter values (two approaches):  
-
-The first approach:  
+Calculate likelihood functions based on given set of parameter values (two approaches):  <br>
+<br>
+The first approach:  <br>
 Calculate based on the deviation of estimated value around the mean value of original data, from a specified start time to a specified end time.  
 Usually it is a good approach to consider only the time interval where each variable has (or almost has) reached its equilibrium, so that the fitted curves will also reach nearly the same equilibriums. If we consider the whole time interval, especially when the data are not yet at its equilibrium, then we will end up getting a very biased result.
 ```{r, eval=FALSE}
@@ -118,9 +122,9 @@ get_scaled_likelihood <- function(p, l){
 }
 ```
 
-The second approach:  
-Calculate based on the deviation of estimated value around the observed value of each variable at each time.  
-The advantage of this approach is that we can utilize the information from the time intervals where the variables have not yet reached their equilibriums.  
+The second approach:  <br>
+Calculate based on the deviation of estimated value around the observed value of each variable at each time.  <br>
+The advantage of this approach is that we can utilize the information from the time intervals where the variables have not yet reached their equilibriums.  <br>
 The drawback, however, is that this approach is not as robust to outliers or randomness of data as the previous one.
 ```{r, eval=FALSE}
 get_scaled_likelihood2 <- function(p, l){
@@ -172,7 +176,7 @@ MCMC_single <- function(step_size, num_steps){
 }
 ```
 
-As the likelihood gets higher and higher, we need to turn down the step size of each parameter, so that they won't get overshoot.  
+As the likelihood gets higher and higher, we need to turn down the step size of each parameter, so that they won't get overshoot.  <br>
 The following is a tentative schedule of the step size for each parameter at certain thresholds of likelihood.
 ```{r, eval=FALSE}
 schedule <- function(lik){
@@ -261,7 +265,7 @@ par$p + c(-1, 1)*1.96*stdv[1]
 par$l + c(-1, 1)*1.96*stdv[2]
 ```
 
-Using the fitted values of parameters  
+Using the fitted values of parameters  <br>
 Plot the trajectories of fitted curves VS original curves for each variable
 ```{r, eval=FALSE}
 out_df <- get_sim_df(par$p, par$l, 0, 4999)
@@ -289,4 +293,12 @@ plot(ross_read$time, ross_read$I, main="I",
      xlab="time", ylab="nums", type="l", col="green")
 lines(out_df$time, out_df$I, col="black")
 dev.off()
+```
+
+The plots are below:<br>
+```{r, echo=FALSE}
+knitr::include_graphics("plots/MCMC/ross_I_MCMC2.jpeg")
+knitr::include_graphics("plots/MCMC/ross_M_MCMC2.jpeg")
+knitr::include_graphics("plots/MCMC/ross_Y_MCMC2.jpeg")
+knitr::include_graphics("plots/MCMC/ross_Z_MCMC2.jpeg")
 ```

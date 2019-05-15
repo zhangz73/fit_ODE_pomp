@@ -8,15 +8,17 @@ References
 
 [Getting Started With Pomp](https://kingaa.github.io/pomp/vignettes/getting_started.html)
 
+How this works?
+---------------
+
+The Iterated Filtering algorithm is an Expectation Maximization (EM) based algorithm. It first generates a list of particles. For each of the particle, it starts with an initial guess (within a specified range) of the values for the missing pa- rameters. Then, for each subsequent iterations, it first figure out the estimated values of the time series data using the current guess of the parameter values; then it calculates the likelihood of this set of parameter values based on the original data and the estimated values. Finally, weighting on the likelihood of each particle, it samples the parameter values again for each particle, and then go through the same process. The number of iterations has to be specified by users as well. Usually if the number of iterations is large enough, then all of the particles will converge to the set of parameter values that fit the data best. The output will be the set of parameter values that have the highest likelihood (a.k.a the MLE).
+
 Required Inputs
 ---------------
 
 data: a csv with one column for time and some other columns for variables.
 hyper-parameters:
-  Np: number of particles
-  Nmif: number of iterations
-  rw.sd: 0 for parameters that are constant, &gt; 0 for parameters we want to fit.
-        It also determines the step size of each parameter during the training.
+  dmeasure: probability of Y given X, where X is an observed variable, and Y is a hidden variable. In our case with Ross-Macdonald model, however, there is not a hidden variable. In order to get pomp work, we need to let Y = X, which means Y is the true (observed) value of X, whereas X is the estimated value using our model, and dmeasure now actually tells the deviation of estimated value of X from its originally observed value. The larger the deviation, the lower value dmeasure will return. <br>   rmeasure: the random process of generating Y using X. As with the case of dmeasure, Y = X in this case. <br>   Np: number of particles <br>   Nmif: number of iterations <br>   rw.sd: 0 for parameters that are constant, &gt; 0 for parameters we want to fit. <br>         It also determines the step size of each parameter during the training.
 
 Packages Required
 -----------------
@@ -34,7 +36,7 @@ library(dplyr)
 Demo (Ross-Macdonald Model)
 ---------------------------
 
-Registers workers, change the 4 to a larger number if you have a more powerful computer.
+Registers workers (for parallel programming), change the 4 to a larger number if you have a more powerful computer.
 
 ``` r
 # Registers workers, change the 4 to a larger number if you
@@ -73,7 +75,7 @@ step functions
 the variables will be updated accordingly at each time step
 
 step function -- stochastic version
-using pseudocode
+using [pseudocode](https://github.com/smitdave/MASH-Main/blob/master/MASH-dev/DanielCitron/RM-Macro/RM-macro.pdf)
 
 ``` r
 Csnippet("
@@ -95,8 +97,7 @@ Csnippet("
 ") -> step
 ```
 
-step function -- deterministic version
-converted from Ross-Macdonald equation, approximated using taylor expansion
+step function -- deterministic version <br> converted from Ross-Macdonald equation, approximated using taylor expansion<br> *An important thing to notice here is that Csnippet does not allow us to use non-primitive types. For instance, do not try to malloc an array inside the Csnippet, or try to pass in a vector as parameter.*
 
 ``` r
 Csnippet("
@@ -145,7 +146,7 @@ Csnippet("
 
 Construct a pomp object
 
-initialize pomp with the Csnippets we defined in the previous part
+initialize pomp with the Csnippets we defined in the previous part <br> the step function above should be placed into discrete\_time() following the rprocess<br> rinit requires for the init function, while rmeasure requires the rmeasure function
 
 ``` r
 output_read %>%
@@ -158,7 +159,7 @@ output_read %>%
   ) -> output_pomp
 ```
 
-Code the deterministic skeleton, which is identical to our ODE, since we don't have random variables directly appears in the ODE
+Code the deterministic skeleton, which is identical to our ODE, since we don't have random variables directly appears in the ODE<br> We are required to specify the skeleton function to get pomp work, though the pomp will only use the step function we created earlier to integrate the trajectories.
 
 ``` r
 output_pomp %>%
@@ -187,7 +188,7 @@ subplex(c(1.1, 1.1),fn=ofun) -> fit
 fit 
 ```
 
-Generate nseq number of random guesses of each paramter with their lower bound and upper bound For the paramters we passed in as constants (eg. N) We can just set both of their lower and upper bounds to their values (eg. N = 500)
+Generate nseq number of random guesses of each paramter with their lower bound and upper bound<br> For the paramters we passed in as constants (eg. N) We can just set both of their lower and upper bounds to their values (eg. N = 500)<br> sobolDesign is a function in pomp used for generating random guesses for each parameter within their ranges
 
 ``` r
 sobolDesign(
@@ -197,11 +198,8 @@ sobolDesign(
 ) -> guesses
 ```
 
-Initialize the object for particle filter using random guesses we generated
-Np is the number of particles we use
-Nmif is the number of iterations
-rw.sd is the standard deviation of a paramter when sample it in the particle filter algorithm
-rw.sd of a constant should be set to 0, so that its value won't change
+Initialize the object for particle filter using random guesses we generated<br>
+Np is the number of particles we use <br> Nmif is the number of iterations <br> rw.sd is the standard deviation of a paramter when sample it in the particle filter algorithm <br> rw.sd of a constant should be set to 0, so that its value won't change<br>
 
 ``` r
 output_pomp %>%
@@ -326,3 +324,5 @@ mlepomp %>%
   theme_bw()
 ggsave("plots/sim_Z_dt=1_Nmif=150_Np=200.png")
 ```
+
+The graphs are below. For the sake of runtime, I haven't got a chance to see the perfectly fitted lines for this dataset. Increasing Np and Nmif will improve the performance, which is demonstrated by some experiments on smaller datasets. ![](plots/dt=1/sim_I_dt=1_Nmif=150_Np=200.png)![](plots/dt=1/sim_M_dt=1_Nmif=150_Np=200.png)![](plots/dt=1/sim_Y_dt=1_Nmif=150_Np=200.png)![](plots/dt=1/sim_Z_dt=1_Nmif=150_Np=200.png)
